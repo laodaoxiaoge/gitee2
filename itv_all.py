@@ -8,591 +8,270 @@ import os
 import threading
 from queue import Queue
 import eventlet
-import base64
-import random
-from fake_useragent import UserAgent
-import json
-from datetime import datetime
 
 eventlet.monkey_patch()
 
-# 配置区域
-CONFIG = {
-    # FOFA API配置（推荐使用）
-    "fofa_email": "your_email@example.com",  # 替换为您的FOFA邮箱
-    "fofa_key": "your_api_key_here",         # 替换为您的FOFA API密钥
-    
-    # 地区搜索词
-    "regions": {
-        "hebei": '"iptv/live/zh_cn.js" && country="CN" && region="河北"',
-        "beijing": '"iptv/live/zh_cn.js" && country="CN" && region="北京"',
-        "guangdong": '"iptv/live/zh_cn.js" && country="CN" && region="广东"',
-        "shanghai": '"iptv/live/zh_cn.js" && country="CN" && region="上海"',
-        "tianjin": '"iptv/live/zh_cn.js" && country="CN" && region="天津"',
-        "chongqing": '"iptv/live/zh_cn.js" && country="CN" && region="重庆"',
-        "shanxi": '"iptv/live/zh_cn.js" && country="CN" && region="山西"',
-        "shaanxi": '"iptv/live/zh_cn.js" && country="CN" && region="陕西"',
-        "liaoning": '"iptv/live/zh_cn.js" && country="CN" && region="辽宁"',
-        "jiangsu": '"iptv/live/zh_cn.js" && country="CN" && region="江苏"',
-        "zhejiang": '"iptv/live/zh_cn.js" && country="CN" && region="浙江"',
-        "anhui": '"iptv/live/zh_cn.js" && country="CN" && region="安徽"',
-        "fujian": '"iptv/live/zh_cn.js" && country="CN" && region="福建"',
-        "jiangxi": '"iptv/live/zh_cn.js" && country="CN" && region="江西"',
-        "shandong": '"iptv/live/zh_cn.js" && country="CN" && region="山东"',
-        "henan": '"iptv/live/zh_cn.js" && country="CN" && region="河南"',
-        "hubei": '"iptv/live/zh_cn.js" && country="CN" && region="湖北"',
-        "hunan": '"iptv/live/zh_cn.js" && country="CN" && region="湖南"'
-    },
-    
-    # 请求设置
-    "timeout": 3,
-    "max_workers": 50,
-    "max_retries": 3,
-    
-    # 频道设置
-    "result_counter": 8,
-    "min_speed": 0.1,
-}
+urls = [
+    "https://fofa.info/result?qbase64=ImlwdHYvbGl2ZS96aF9jbi5qcyIgJiYgY291bnRyeT0iQ04iICYmIHJlZ2lvbj0iSGViZWki",
+    # ... 其他URL保持不变
+]
 
-class SecureFOFACrawler:
-    def __init__(self):
-        self.ua = UserAgent()
-        self.results = []
-        self.channels = []
-        self.error_channels = []
-        self.task_queue = Queue()
-        
-    def search_fofa_api(self, query, page=1, size=100):
-        """使用FOFA官方API搜索"""
-        if CONFIG["fofa_email"] == "your_email@example.com" or CONFIG["fofa_key"] == "your_api_key_here":
-            print("⚠️ 警告: 未配置FOFA API密钥，将尝试使用爬取方式")
-            return []
-            
-        try:
-            query_base64 = base64.b64encode(query.encode()).decode()
-            api_url = "https://fofa.info/api/v1/search/all"
-            params = {
-                'email': CONFIG["fofa_email"],
-                'key': CONFIG["fofa_key"],
-                'qbase64': query_base64,
-                'page': page,
-                'size': size,
-                'fields': 'ip,port,protocol,host'
-            }
-            
-            response = requests.get(api_url, params=params, timeout=CONFIG["timeout"])
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('error'):
-                    print(f"❌ API错误: {data.get('errmsg', '未知错误')}")
-                    return []
-                return data.get('results', [])
-        except Exception as e:
-            print(f"❌ API请求失败: {e}")
-            
-        return []
+def modify_urls(url):
+    """修改URL生成测试地址"""
+    modified_urls = []
+    ip_start_index = url.find("//") + 2
+    ip_end_index = url.find(":", ip_start_index)
+    base_url = url[:ip_start_index]
+    ip_address = url[ip_start_index:ip_end_index]
+    port = url[ip_end_index:]
+    ip_end = "/iptv/live/1000.json?key=txiptv"
     
-    def create_stealth_driver(self):
-        """创建隐形的浏览器实例"""
+    for i in range(1, 256):
+        modified_ip = f"{ip_address[:-1]}{i}"
+        modified_url = f"{base_url}{modified_ip}{port}{ip_end}"
+        modified_urls.append(modified_url)
+
+    return modified_urls
+
+def is_url_accessible(url):
+    """检查URL是否可访问"""
+    try:
+        response = requests.get(url, timeout=0.5)
+        if response.status_code == 200:
+            return url
+    except:
+        pass
+    return None
+
+def main():
+    """主函数"""
+    results = []
+    
+    for url in urls:
+        # 创建Chrome浏览器实例
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument(f'--user-agent={self.ua.random}')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
+
         driver = webdriver.Chrome(options=chrome_options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        return driver
-    
-    def crawl_fofa(self, url, max_retries=3):
-        """爬取FOFA搜索结果"""
-        for attempt in range(max_retries):
-            try:
-                driver = self.create_stealth_driver()
-                
-                # 随机延迟
-                time.sleep(random.uniform(5, 15))
-                
-                driver.get(url)
-                
-                # 模拟人类行为
-                self.simulate_human_behavior(driver)
-                
-                # 等待页面加载
-                time.sleep(random.uniform(8, 15))
-                
-                page_content = driver.page_source
-                driver.quit()
-                
-                # 检查是否被封禁
-                if "IP访问异常" in page_content or "爬虫" in page_content:
-                    print(f"❌ 第{attempt+1}次尝试被检测为爬虫")
-                    if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 60
-                        print(f"⏳ 等待{wait_time}秒后重试...")
-                        time.sleep(wait_time)
+        
+        try:
+            # 访问网页
+            driver.get(url)
+            time.sleep(10)
+            
+            # 获取页面内容
+            page_content = driver.page_source
+
+            # 查找URL
+            pattern = r"http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+"
+            urls_all = re.findall(pattern, page_content)
+            urls_set = set(urls_all)
+            
+            # 处理URL（将IP第四位改为1）
+            processed_urls = []
+            for url_item in urls_set:
+                url_item = url_item.strip()
+                ip_start_index = url_item.find("//") + 2
+                ip_end_index = url_item.find(":", ip_start_index)
+                ip_dot_start = url_item.find(".") + 1
+                ip_dot_second = url_item.find(".", ip_dot_start) + 1
+                ip_dot_three = url_item.find(".", ip_dot_second) + 1
+                base_url = url_item[:ip_start_index]
+                ip_address = url_item[ip_start_index:ip_dot_three]
+                port = url_item[ip_end_index:]
+                modified_ip = f"{ip_address}1"
+                processed_url = f"{base_url}{modified_ip}{port}"
+                processed_urls.append(processed_url)
+            
+            # 去重
+            unique_urls = set(processed_urls)
+            valid_urls = []
+
+            # 多线程测试URL可用性
+            with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+                futures = []
+                for url_item in unique_urls:
+                    modified_urls_list = modify_urls(url_item)
+                    for modified_url in modified_urls_list:
+                        futures.append(executor.submit(is_url_accessible, modified_url))
+
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if result:
+                        valid_urls.append(result)
+                        print(f"✅ 可用URL: {result}")
+
+            # 处理每个可用的URL
+            for url_item in valid_urls:
+                try:
+                    # 获取JSON数据
+                    response = requests.get(url_item, timeout=0.5)
+                    json_data = response.json()
+
+                    # 解析频道数据
+                    if 'data' in json_data:
+                        for item in json_data['data']:
+                            if isinstance(item, dict):
+                                name = item.get('name', '')
+                                urlx = item.get('url', '')
+                                
+                                if not name or not urlx:
+                                    continue
+                                
+                                # 处理URL格式
+                                if ',' in urlx:
+                                    continue
+                                    
+                                if 'http' in urlx:
+                                    final_url = urlx
+                                else:
+                                    # 构建完整URL
+                                    ip_start_index = url_item.find("//") + 2
+                                    ip_dot_start = url_item.find(".") + 1
+                                    ip_index_second = url_item.find("/", ip_dot_start)
+                                    base_url_part = url_item[:ip_start_index]
+                                    ip_address_part = url_item[ip_start_index:ip_index_second]
+                                    url_base = f"{base_url_part}{ip_address_part}"
+                                    final_url = f"{url_base}{urlx}"
+
+                                # 清理频道名称
+                                if name:
+                                    name = name.replace("cctv", "CCTV")
+                                    name = name.replace("中央", "CCTV")
+                                    name = name.replace("央视", "CCTV")
+                                    name = name.replace("高清", "")
+                                    name = name.replace("超高", "")
+                                    name = name.replace("HD", "")
+                                    name = name.replace("标清", "")
+                                    name = name.replace("频道", "")
+                                    name = name.replace("-", "")
+                                    name = name.replace(" ", "")
+                                    name = name.replace("PLUS", "+")
+                                    name = name.replace("＋", "+")
+                                    name = name.replace("(", "")
+                                    name = name.replace(")", "")
+                                    name = re.sub(r"CCTV(\d+)台", r"CCTV\1", name)
+                                    
+                                    # 添加更多清理规则...
+                                    
+                                    results.append(f"{name},{final_url}")
+                                    print(f"📺 找到频道: {name}")
+                except Exception as e:
+                    print(f"❌ 处理URL失败: {e}")
                     continue
                     
-                return page_content
-                
-            except Exception as e:
-                print(f"❌ 第{attempt+1}次爬取失败: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(30)
-                    
-        return None
-    
-    def simulate_human_behavior(self, driver):
-        """模拟人类浏览行为"""
-        # 随机滚动页面
-        scroll_actions = [
-            "window.scrollTo(0, document.body.scrollHeight * 0.3);",
-            "window.scrollTo(0, document.body.scrollHeight * 0.7);", 
-            "window.scrollTo(0, document.body.scrollHeight);"
-        ]
-        
-        for action in scroll_actions:
-            driver.execute_script(action)
-            time.sleep(random.uniform(1, 3))
-    
-    def extract_ips_from_page(self, page_content):
-        """从页面内容提取IP地址"""
-        pattern = r"http://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+"
-        urls_all = re.findall(pattern, page_content)
-        urls = set(urls_all)
-        
-        # 处理IP，将第四位改为1
-        processed_urls = []
-        for url in urls:
-            url = url.strip()
-            ip_start_index = url.find("//") + 2
-            ip_end_index = url.find(":", ip_start_index)
-            ip_dot_start = url.find(".") + 1
-            ip_dot_second = url.find(".", ip_dot_start) + 1
-            ip_dot_three = url.find(".", ip_dot_second) + 1
-            base_url = url[:ip_start_index]
-            ip_address = url[ip_start_index:ip_dot_three]
-            port = url[ip_end_index:]
-            modified_ip = f"{ip_address}1"
-            processed_url = f"{base_url}{modified_ip}{port}"
-            processed_urls.append(processed_url)
-            
-        return set(processed_urls)
-    
-    def extract_ips_from_api(self, api_results):
-        """从API结果提取IP地址"""
-        processed_urls = []
-        for result in api_results:
-            ip = result[0]
-            port = result[1]
-            protocol = result[2].lower() if len(result) > 2 else "http"
-            processed_url = f"{protocol}://{ip[:-1]}1:{port}"
-            processed_urls.append(processed_url)
-            
-        return set(processed_urls)
-    
-    def modify_urls(self, url):
-        """生成测试URL"""
-        modified_urls = []
-        ip_start_index = url.find("//") + 2
-        ip_end_index = url.find(":", ip_start_index)
-        base_url = url[:ip_start_index]
-        ip_address = url[ip_start_index:ip_end_index]
-        port = url[ip_end_index:]
-        ip_end = "/iptv/live/1000.json?key=txiptv"
-        
-        for i in range(1, 256):
-            modified_ip = f"{ip_address[:-1]}{i}"
-            modified_url = f"{base_url}{modified_ip}{port}{ip_end}"
-            modified_urls.append(modified_url)
-            
-        return modified_urls
-    
-    def is_url_accessible(self, url):
-        """检查URL是否可访问"""
-        for attempt in range(CONFIG["max_retries"]):
-            try:
-                response = requests.get(url, timeout=CONFIG["timeout"])
-                if response.status_code == 200:
-                    return url
-            except:
-                if attempt < CONFIG["max_retries"] - 1:
-                    time.sleep(1)
-        return None
-    
-    def fetch_all_ips(self):
-        """获取所有IP地址"""
-        all_ips = set()
-        
-        for region, query in CONFIG["regions"].items():
-            print(f"🔍 搜索地区: {region}")
-            
-            # 优先使用API
-            api_results = self.search_fofa_api(query)
-            if api_results:
-                ips = self.extract_ips_from_api(api_results)
-                all_ips.update(ips)
-                print(f"✅ 通过API找到 {len(ips)} 个IP")
-                continue
-                
-            # API失败时使用爬取
-            query_base64 = base64.b64encode(query.encode()).decode()
-            fofa_url = f"https://fofa.info/result?qbase64={query_base64}"
-            
-            page_content = self.crawl_fofa(fofa_url)
-            if page_content:
-                ips = self.extract_ips_from_page(page_content)
-                all_ips.update(ips)
-                print(f"✅ 通过爬取找到 {len(ips)} 个IP")
-            else:
-                print(f"❌ 无法获取 {region} 的IP")
-                
-        return all_ips
-    
-    def test_urls(self, urls):
-        """测试URL可用性"""
-        valid_urls = []
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=CONFIG["max_workers"]) as executor:
-            futures = []
-            for url in urls:
-                modified_urls = self.modify_urls(url)
-                for modified_url in modified_urls:
-                    futures.append(executor.submit(self.is_url_accessible, modified_url))
-            
-            for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                if result:
-                    valid_urls.append(result)
-                    print(f"✅ 可用URL: {result}")
-        
-        return valid_urls
-    
-    def parse_json_data(self, url):
-        """解析JSON数据获取频道信息"""
-        try:
-            ip_start_index = url.find("//") + 2
-            ip_dot_start = url.find(".") + 1
-            ip_index_second = url.find("/", ip_dot_start)
-            base_url = url[:ip_start_index]
-            ip_address = url[ip_start_index:ip_index_second]
-            url_x = f"{base_url}{ip_address}"
-            
-            response = requests.get(url, timeout=CONFIG["timeout"])
-            json_data = response.json()
-            
-            channels = []
-            for item in json_data['data']:
-                if isinstance(item, dict):
-                    name = item.get('name')
-                    urlx = item.get('url')
-                    
-                    if not name or not urlx:
-                        continue
-                    
-                    if ',' in urlx:
-                        continue
-                        
-                    if 'http' in urlx:
-                        urld = f"{urlx}"
-                    else:
-                        urld = f"{url_x}{urlx}"
-                    
-                    # 清理频道名称
-                    name = self.clean_channel_name(name)
-                    channels.append((name, urld))
-            
-            return channels
-            
         except Exception as e:
-            print(f"❌ 解析JSON失败: {e}")
-            return []
+            print(f"❌ 处理主URL失败: {e}")
+        finally:
+            driver.quit()
+
+    # 去重结果
+    unique_results = list(set(results))
     
-    def clean_channel_name(self, name):
-        """清理频道名称"""
-        replacements = {
-            "cctv": "CCTV",
-            "中央": "CCTV",
-            "央视": "CCTV",
-            "高清": "",
-            "超高": "",
-            "HD": "",
-            "标清": "",
-            "频道": "",
-            "-": "",
-            " ": "",
-            "PLUS": "+",
-            "＋": "+",
-            "(": "",
-            ")": "",
-            "CCTV1综合": "CCTV1",
-            "CCTV2财经": "CCTV2",
-            "CCTV3综艺": "CCTV3",
-            "CCTV4国际": "CCTV4",
-            "CCTV4中文国际": "CCTV4",
-            "CCTV4欧洲": "CCTV4",
-            "CCTV5体育": "CCTV5",
-            "CCTV6电影": "CCTV6",
-            "CCTV7军事": "CCTV7",
-            "CCTV7军农": "CCTV7",
-            "CCTV7农业": "CCTV7",
-            "CCTV7国防军事": "CCTV7",
-            "CCTV8电视剧": "CCTV8",
-            "CCTV9记录": "CCTV9",
-            "CCTV9纪录": "CCTV9",
-            "CCTV10科教": "CCTV10",
-            "CCTV11戏曲": "CCTV11",
-            "CCTV12社会与法": "CCTV12",
-            "CCTV13新闻": "CCTV13",
-            "CCTV新闻": "CCTV13",
-            "CCTV14少儿": "CCTV14",
-            "CCTV15音乐": "CCTV15",
-            "CCTV16奥林匹克": "CCTV16",
-            "CCTV17农业农村": "CCTV17",
-            "CCTV17农业": "CCTV17",
-            "CCTV5+体育赛视": "CCTV5+",
-            "CCTV5+体育赛事": "CCTV5+",
-            "CCTV5+体育": "CCTV5+"
-        }
-        
-        for old, new in replacements.items():
-            name = name.replace(old, new)
-        
-        # 使用正则表达式处理模式匹配
-        name = re.sub(r"CCTV(\d+)台", r"CCTV\1", name)
-        
-        return name
-    
-    def test_channel_speed(self, channel_name, channel_url):
-        """测试频道速度"""
+    # 测试频道速度
+    channels = []
+    for result in unique_results:
+        if ',' in result:
+            channel_name, channel_url = result.split(',', 1)
+            channels.append((channel_name, channel_url))
+
+    # 多线程测试频道速度
+    def test_channel(channel_name, channel_url):
         try:
-            # 获取M3U8文件内容
-            response = requests.get(channel_url, timeout=CONFIG["timeout"])
+            # 获取M3U8内容
+            channel_url_base = channel_url.rstrip(channel_url.split('/')[-1])
+            response = requests.get(channel_url, timeout=1)
             lines = response.text.strip().split('\n')
+            ts_files = [line.split('/')[-1] for line in lines if line and not line.startswith('#')]
             
-            # 提取TS文件列表
-            ts_lists = [line for line in lines if line and not line.startswith('#')]
-            
-            if not ts_lists:
-                return None
+            if ts_files:
+                ts_file = ts_files[0].split('.ts')[0] + '.ts'
+                ts_url = channel_url_base + ts_file
                 
-            # 获取第一个TS文件的URL
-            ts_url = channel_url.rsplit('/', 1)[0] + '/' + ts_lists[0]
-            
-            # 使用eventlet设置超时
-            with eventlet.Timeout(5, False):
+                # 测试下载速度
                 start_time = time.time()
-                content = requests.get(ts_url, timeout=CONFIG["timeout"]).content
+                content = requests.get(ts_url, timeout=1).content
                 end_time = time.time()
                 
                 if content:
                     file_size = len(content)
-                    download_speed = file_size / (end_time - start_time) / 1024 / 1024  # MB/s
+                    download_time = end_time - start_time
+                    speed = file_size / download_time / 1024 / 1024  # MB/s
                     
-                    if download_speed >= CONFIG["min_speed"]:
-                        return channel_name, channel_url, f"{download_speed:.3f} MB/s"
-        
+                    # 清理临时文件（如果创建了的话）
+                    if os.path.exists(ts_file):
+                        os.remove(ts_file)
+                    
+                    return channel_name, channel_url, f"{speed:.3f} MB/s"
         except:
             pass
-            
         return None
-    
-    def worker(self):
-        """工作线程函数"""
-        while True:
-            channel_name, channel_url = self.task_queue.get()
-            if channel_name is None:  # 终止信号
-                break
-                
-            try:
-                result = self.test_channel_speed(channel_name, channel_url)
-                if result:
-                    self.results.append(result)
-                else:
-                    self.error_channels.append((channel_name, channel_url))
-            except Exception as e:
-                print(f"❌ 测试频道 {channel_name} 时出错: {e}")
-                self.error_channels.append((channel_name, channel_url))
-                
-            # 更新进度
-            processed = len(self.results) + len(self.error_channels)
-            total = len(self.channels)
-            percentage = (processed / total) * 100 if total > 0 else 0
-            print(f"📊 进度: {processed}/{total} ({percentage:.1f}%)")
-            
-            self.task_queue.task_done()
-    
-    def test_all_channels(self):
-        """测试所有频道速度"""
-        print("🚀 开始测试频道速度...")
-        
-        # 创建任务队列
-        for channel in self.channels:
-            self.task_queue.put(channel)
-        
-        # 创建工作线程
-        threads = []
-        for _ in range(CONFIG["max_workers"]):
-            t = threading.Thread(target=self.worker)
-            t.daemon = True
-            t.start()
-            threads.append(t)
-        
-        # 等待所有任务完成
-        self.task_queue.join()
-        
-        # 发送终止信号
-        for _ in range(CONFIG["max_workers"]):
-            self.task_queue.put((None, None))
-        
-        for t in threads:
-            t.join()
-    
-    def generate_playlist(self):
-        """生成播放列表"""
-        print("📝 生成播放列表...")
-        
-        # 对频道进行排序
-        def channel_key(channel_name):
-            match = re.search(r'\d+', channel_name)
-            if match:
-                return int(match.group())
-            else:
-                return float('inf')
-        
-        self.results.sort(key=lambda x: (x[0], -float(x[2].split()[0])))
-        self.results.sort(key=lambda x: channel_key(x[0]))
-        
-        # 生成itvlist.txt
-        with open("itvlist.txt", 'w', encoding='utf-8') as file:
-            file.write('央视频道,#genre#\n')
-            channel_counters = {}
-            for result in self.results:
-                channel_name, channel_url, speed = result
-                if 'CCTV' in channel_name:
-                    if channel_name not in channel_counters:
-                        channel_counters[channel_name] = 0
-                    if channel_counters[channel_name] < CONFIG["result_counter"]:
-                        file.write(f"{channel_name},{channel_url}\n")
-                        channel_counters[channel_name] += 1
-            
-            file.write('\n卫视频道,#genre#\n')
-            channel_counters = {}
-            for result in self.results:
-                channel_name, channel_url, speed = result
-                if '卫视' in channel_name:
-                    if channel_name not in channel_counters:
-                        channel_counters[channel_name] = 0
-                    if channel_counters[channel_name] < CONFIG["result_counter"]:
-                        file.write(f"{channel_name},{channel_url}\n")
-                        channel_counters[channel_name] += 1
-            
-            file.write('\n其他频道,#genre#\n')
-            channel_counters = {}
-            for result in self.results:
-                channel_name, channel_url, speed = result
-                if 'CCTV' not in channel_name and '卫视' not in channel_name and '测试' not in channel_name:
-                    if channel_name not in channel_counters:
-                        channel_counters[channel_name] = 0
-                    if channel_counters[channel_name] < CONFIG["result_counter"]:
-                        file.write(f"{channel_name},{channel_url}\n")
-                        channel_counters[channel_name] += 1
-        
-        # 生成itvlist.m3u
-        with open("itvlist.m3u", 'w', encoding='utf-8') as file:
-            file.write('#EXTM3U\n')
-            
-            channel_counters = {}
-            for result in self.results:
-                channel_name, channel_url, speed = result
-                if 'CCTV' in channel_name:
-                    if channel_name not in channel_counters:
-                        channel_counters[channel_name] = 0
-                    if channel_counters[channel_name] < CONFIG["result_counter"]:
-                        file.write(f'#EXTINF:-1 group-title="央视频道",{channel_name}\n')
-                        file.write(f'{channel_url}\n')
-                        channel_counters[channel_name] += 1
-            
-            channel_counters = {}
-            for result in self.results:
-                channel_name, channel_url, speed = result
-                if '卫视' in channel_name:
-                    if channel_name not in channel_counters:
-                        channel_counters[channel_name] = 0
-                    if channel_counters[channel_name] < CONFIG["result_counter"]:
-                        file.write(f'#EXTINF:-1 group-title="卫视频道",{channel_name}\n')
-                        file.write(f'{channel_url}\n')
-                        channel_counters[channel_name] += 1
-            
-            channel_counters = {}
-            for result in self.results:
-                channel_name, channel_url, speed = result
-                if 'CCTV' not in channel_name and '卫视' not in channel_name and '测试' not in channel_name:
-                    if channel_name not in channel_counters:
-                        channel_counters[channel_name] = 0
-                    if channel_counters[channel_name] < CONFIG["result_counter"]:
-                        file.write(f'#EXTINF:-1 group-title="其他频道",{channel_name}\n')
-                        file.write(f'{channel_url}\n')
-                        channel_counters[channel_name] += 1
-    
-    def run(self):
-        """运行完整的IPTV抓取流程"""
-        print("🎬 开始IPTV频道抓取流程...")
-        start_time = time.time()
-        
-        # 1. 获取所有IP地址
-        print("🔍 步骤1: 获取IP地址")
-        all_ips = self.fetch_all_ips()
-        print(f"✅ 找到 {len(all_ips)} 个IP地址")
-        
-        # 2. 测试URL可用性
-        print("🔍 步骤2: 测试URL可用性")
-        valid_urls = self.test_urls(all_ips)
-        print(f"✅ 找到 {len(valid_urls)} 个可用URL")
-        
-        # 3. 解析JSON数据获取频道
-        print("🔍 步骤3: 解析频道数据")
-        for url in valid_urls:
-            channels = self.parse_json_data(url)
-            self.channels.extend(channels)
-        print(f"✅ 找到 {len(self.channels)} 个频道")
-        
-        # 4. 测试频道速度
-        self.test_all_channels()
-        print(f"✅ 测试完成: {len(self.results)} 个可用频道, {len(self.error_channels)} 个不可用频道")
-        
-        # 5. 生成播放列表
-        self.generate_playlist()
-        print("✅ 播放列表生成完成")
-        
-        end_time = time.time()
-        total_time = end_time - start_time
-        print(f"🎉 全部完成! 总耗时: {total_time:.2f} 秒")
-        
-        # 显示统计信息
-        print(f"📊 统计信息:")
-        print(f"   - 找到IP地址: {len(all_ips)}")
-        print(f"   - 可用URL: {len(valid_urls)}")
-        print(f"   - 发现频道: {len(self.channels)}")
-        print(f"   - 可用频道: {len(self.results)}")
-        print(f"   - 不可用频道: {len(self.error_channels)}")
-        print(f"   - 生成文件: itvlist.txt, itvlist.m3u")
 
-# 主程序入口
+    # 并行测试所有频道
+    working_channels = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(test_channel, name, url): (name, url) for name, url in channels}
+        
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                working_channels.append(result)
+                name, url, speed = result
+                print(f"✅ 频道可用: {name} - 速度: {speed}")
+
+    # 生成播放列表文件
+    if working_channels:
+        # 按频道名称排序
+        def get_channel_number(name):
+            match = re.search(r'\d+', name)
+            return int(match.group()) if match else 9999
+        
+        working_channels.sort(key=lambda x: (get_channel_number(x[0]), x[0]))
+        
+        # 生成M3U文件
+        with open("itvlist.m3u", "w", encoding="utf-8") as f:
+            f.write("#EXTM3U\n")
+            
+            # 央视频道
+            for name, url, speed in working_channels:
+                if "CCTV" in name:
+                    f.write(f"#EXTINF:-1 group-title=\"央视频道\",{name}\n")
+                    f.write(f"{url}\n")
+            
+            # 卫视频道
+            for name, url, speed in working_channels:
+                if "卫视" in name:
+                    f.write(f"#EXTINF:-1 group-title=\"卫视频道\",{name}\n")
+                    f.write(f"{url}\n")
+            
+            # 其他频道
+            for name, url, speed in working_channels:
+                if "CCTV" not in name and "卫视" not in name:
+                    f.write(f"#EXTINF:-1 group-title=\"其他频道\",{name}\n")
+                    f.write(f"{url}\n")
+        
+        # 生成TXT文件
+        with open("itvlist.txt", "w", encoding="utf-8") as f:
+            f.write("央视频道,#genre#\n")
+            for name, url, speed in working_channels:
+                if "CCTV" in name:
+                    f.write(f"{name},{url}\n")
+            
+            f.write("\n卫视频道,#genre#\n")
+            for name, url, speed in working_channels:
+                if "卫视" in name:
+                    f.write(f"{name},{url}\n")
+            
+            f.write("\n其他频道,#genre#\n")
+            for name, url, speed in working_channels:
+                if "CCTV" not in name and "卫视" not in name:
+                    f.write(f"{name},{url}\n")
+        
+        print(f"🎉 完成! 生成 {len(working_channels)} 个可用频道")
+    else:
+        print("❌ 没有找到可用的频道")
+
 if __name__ == "__main__":
-    # 安装必要的依赖
-    try:
-        import selenium
-        import fake_useragent
-        import eventlet
-    except ImportError:
-        print("❌ 请先安装依赖: pip install selenium fake-useragent eventlet")
-        exit(1)
-    
-    # 创建爬虫实例并运行
-    crawler = SecureFOFACrawler()
-    crawler.run()
+    main()

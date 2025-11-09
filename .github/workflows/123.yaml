@@ -1,4 +1,4 @@
-name: itvlist11
+name: itvlist
 
 on:
   schedule:
@@ -27,6 +27,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y chromium-browser chromium-chromedriver
+          echo "Chrome路径: $(which chromium-browser)"
           
       - name: Install Python dependencies
         run: |
@@ -35,12 +36,12 @@ jobs:
       - name: Run itv_all
         run: python itv_all.py
         
-      - name: Check for generated files
+      - name: Check generated files
         run: |
-          echo "📁 检查生成的文件:"
+          echo "生成的文件:"
           ls -la *.txt *.m3u 2>/dev/null || echo "未找到文件"
           if [ -f "itvlist.txt" ]; then
-            echo "📄 itvlist.txt 内容预览:"
+            echo "itvlist.txt 内容预览:"
             head -5 itvlist.txt
           fi
           
@@ -53,7 +54,7 @@ jobs:
             git commit -m "🤖 Auto update: $(date +'%Y-%m-%d %H:%M')"
             git push
           else
-            echo "🟡 没有文件变更，跳过提交"
+            echo "没有文件变更，跳过提交"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,4 +1,4 @@
-name: itvlist11
+name: itvlist
 
 on:
   schedule:
@@ -7,62 +7,53 @@ on:
     branches:
       - main
 
-# 添加必要的权限
 permissions:
   contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # 添加认证
-          fetch-depth: 0  # 获取完整历史记录
-    
+        
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'  # 指定具体版本
-
-      - name: Install dependencies
-        run: pip install selenium requests futures eventlet
-
-      - name: Run itv_all
-        run: python itv_all.py  # 简化路径，不需要${{ github.workspace }}
-
-      #- name: Run cctv
-        #run: python cctv.py
-        
-      #- name: Run weishi
-        #run: python weishi.py
-        
-      #- name: Run qita
-        #run: python qita.py
-        
-      - name: Check for changes
-        id: check-changes
+          python-version: '3.10'
+          
+      - name: Install system dependencies
         run: |
-          # 检查是否有文件变更
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "🟡 没有检测到文件变更"
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "✅ 检测到文件变更"
-            git status --short
-          fi
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser chromium-chromedriver
+          
+      - name: Install Python dependencies
+        run: |
+          pip install selenium requests futures eventlet
+          
+      - name: Run itv_all
+        run: python itv_all.py
         
-      - name: 提交更改
-        if: steps.check-changes.outputs.has_changes == 'true'
+      - name: Check for generated files
+        run: |
+          echo "📁 检查生成的文件:"
+          ls -la *.txt *.m3u 2>/dev/null || echo "未找到文件"
+          if [ -f "itvlist.txt" ]; then
+            echo "📄 itvlist.txt 内容预览:"
+            head -5 itvlist.txt
+          fi
+          
+      - name: Commit and push if changed
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add *.txt *.m3u
-          git commit -m "🤖 Auto update: $(date +'%Y-%m-%d %H:%M')"
-          git pull --rebase origin main  # 取消注释，先拉取更新
-          git push origin main  # 不要使用 -f
+          if ! git diff --staged --quiet; then
+            git commit -m "🤖 Auto update: $(date +'%Y-%m-%d %H:%M')"
+            git push
+          else
+            echo "🟡 没有文件变更，跳过提交"
+          fi
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 使用GitHub Token认证
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

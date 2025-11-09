@@ -16,13 +16,13 @@ from datetime import datetime
 
 eventlet.monkey_patch()
 
-# 配置区域 - 请根据实际情况修改
+# 配置区域
 CONFIG = {
     # FOFA API配置（推荐使用）
     "fofa_email": "your_email@example.com",  # 替换为您的FOFA邮箱
     "fofa_key": "your_api_key_here",         # 替换为您的FOFA API密钥
     
-    # 地区搜索词（可以根据需要调整）
+    # 地区搜索词
     "regions": {
         "hebei": '"iptv/live/zh_cn.js" && country="CN" && region="河北"',
         "beijing": '"iptv/live/zh_cn.js" && country="CN" && region="北京"',
@@ -45,13 +45,13 @@ CONFIG = {
     },
     
     # 请求设置
-    "timeout": 3,           # 请求超时时间（秒）
-    "max_workers": 50,      # 最大线程数
-    "max_retries": 3,       # 最大重试次数
+    "timeout": 3,
+    "max_workers": 50,
+    "max_retries": 3,
     
     # 频道设置
-    "result_counter": 8,    # 每个频道保留的最大数量
-    "min_speed": 0.1,       # 最低速度要求（MB/s）
+    "result_counter": 8,
+    "min_speed": 0.1,
 }
 
 class SecureFOFACrawler:
@@ -60,10 +60,11 @@ class SecureFOFACrawler:
         self.results = []
         self.channels = []
         self.error_channels = []
+        self.task_queue = Queue()
         
     def search_fofa_api(self, query, page=1, size=100):
         """使用FOFA官方API搜索"""
-        if not CONFIG["fofa_email"] or not CONFIG["fofa_key"]:
+        if CONFIG["fofa_email"] == "your_email@example.com" or CONFIG["fofa_key"] == "your_api_key_here":
             print("⚠️ 警告: 未配置FOFA API密钥，将尝试使用爬取方式")
             return []
             
@@ -101,7 +102,7 @@ class SecureFOFACrawler:
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument(f'--user-agent={self.ua.random}')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_exmental_option('useAutomationExtension', False)
+        chrome_options.add_experimental_option('useAutomationExtension', False)
         
         driver = webdriver.Chrome(options=chrome_options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -369,16 +370,18 @@ class SecureFOFACrawler:
     def test_channel_speed(self, channel_name, channel_url):
         """测试频道速度"""
         try:
-            channel_url_t = channel_url.rstrip(channel_url.split('/')[-1])
+            # 获取M3U8文件内容
             response = requests.get(channel_url, timeout=CONFIG["timeout"])
             lines = response.text.strip().split('\n')
-            ts_lists = [line.split('/')[-1] for line in lines if not line.startswith('#')]
+            
+            # 提取TS文件列表
+            ts_lists = [line for line in lines if line and not line.startswith('#')]
             
             if not ts_lists:
                 return None
                 
-            ts_lists_0 = ts_lists[0].rstrip(ts_lists[0].split('.ts')[-1])
-            ts_url = channel_url_t + ts_lists[0]
+            # 获取第一个TS文件的URL
+            ts_url = channel_url.rsplit('/', 1)[0] + '/' + ts_lists[0]
             
             # 使用eventlet设置超时
             with eventlet.Timeout(5, False):
@@ -412,6 +415,7 @@ class SecureFOFACrawler:
                 else:
                     self.error_channels.append((channel_name, channel_url))
             except Exception as e:
+                print(f"❌ 测试频道 {channel_name} 时出错: {e}")
                 self.error_channels.append((channel_name, channel_url))
                 
             # 更新进度
@@ -427,7 +431,6 @@ class SecureFOFACrawler:
         print("🚀 开始测试频道速度...")
         
         # 创建任务队列
-        self.task_queue = Queue()
         for channel in self.channels:
             self.task_queue.put(channel)
         
@@ -475,4 +478,121 @@ class SecureFOFACrawler:
                         channel_counters[channel_name] = 0
                     if channel_counters[channel_name] < CONFIG["result_counter"]:
                         file.write(f"{channel_name},{channel_url}\n")
-                        channel_counters[channel_name] +=
+                        channel_counters[channel_name] += 1
+            
+            file.write('\n卫视频道,#genre#\n')
+            channel_counters = {}
+            for result in self.results:
+                channel_name, channel_url, speed = result
+                if '卫视' in channel_name:
+                    if channel_name not in channel_counters:
+                        channel_counters[channel_name] = 0
+                    if channel_counters[channel_name] < CONFIG["result_counter"]:
+                        file.write(f"{channel_name},{channel_url}\n")
+                        channel_counters[channel_name] += 1
+            
+            file.write('\n其他频道,#genre#\n')
+            channel_counters = {}
+            for result in self.results:
+                channel_name, channel_url, speed = result
+                if 'CCTV' not in channel_name and '卫视' not in channel_name and '测试' not in channel_name:
+                    if channel_name not in channel_counters:
+                        channel_counters[channel_name] = 0
+                    if channel_counters[channel_name] < CONFIG["result_counter"]:
+                        file.write(f"{channel_name},{channel_url}\n")
+                        channel_counters[channel_name] += 1
+        
+        # 生成itvlist.m3u
+        with open("itvlist.m3u", 'w', encoding='utf-8') as file:
+            file.write('#EXTM3U\n')
+            
+            channel_counters = {}
+            for result in self.results:
+                channel_name, channel_url, speed = result
+                if 'CCTV' in channel_name:
+                    if channel_name not in channel_counters:
+                        channel_counters[channel_name] = 0
+                    if channel_counters[channel_name] < CONFIG["result_counter"]:
+                        file.write(f'#EXTINF:-1 group-title="央视频道",{channel_name}\n')
+                        file.write(f'{channel_url}\n')
+                        channel_counters[channel_name] += 1
+            
+            channel_counters = {}
+            for result in self.results:
+                channel_name, channel_url, speed = result
+                if '卫视' in channel_name:
+                    if channel_name not in channel_counters:
+                        channel_counters[channel_name] = 0
+                    if channel_counters[channel_name] < CONFIG["result_counter"]:
+                        file.write(f'#EXTINF:-1 group-title="卫视频道",{channel_name}\n')
+                        file.write(f'{channel_url}\n')
+                        channel_counters[channel_name] += 1
+            
+            channel_counters = {}
+            for result in self.results:
+                channel_name, channel_url, speed = result
+                if 'CCTV' not in channel_name and '卫视' not in channel_name and '测试' not in channel_name:
+                    if channel_name not in channel_counters:
+                        channel_counters[channel_name] = 0
+                    if channel_counters[channel_name] < CONFIG["result_counter"]:
+                        file.write(f'#EXTINF:-1 group-title="其他频道",{channel_name}\n')
+                        file.write(f'{channel_url}\n')
+                        channel_counters[channel_name] += 1
+    
+    def run(self):
+        """运行完整的IPTV抓取流程"""
+        print("🎬 开始IPTV频道抓取流程...")
+        start_time = time.time()
+        
+        # 1. 获取所有IP地址
+        print("🔍 步骤1: 获取IP地址")
+        all_ips = self.fetch_all_ips()
+        print(f"✅ 找到 {len(all_ips)} 个IP地址")
+        
+        # 2. 测试URL可用性
+        print("🔍 步骤2: 测试URL可用性")
+        valid_urls = self.test_urls(all_ips)
+        print(f"✅ 找到 {len(valid_urls)} 个可用URL")
+        
+        # 3. 解析JSON数据获取频道
+        print("🔍 步骤3: 解析频道数据")
+        for url in valid_urls:
+            channels = self.parse_json_data(url)
+            self.channels.extend(channels)
+        print(f"✅ 找到 {len(self.channels)} 个频道")
+        
+        # 4. 测试频道速度
+        self.test_all_channels()
+        print(f"✅ 测试完成: {len(self.results)} 个可用频道, {len(self.error_channels)} 个不可用频道")
+        
+        # 5. 生成播放列表
+        self.generate_playlist()
+        print("✅ 播放列表生成完成")
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+        print(f"🎉 全部完成! 总耗时: {total_time:.2f} 秒")
+        
+        # 显示统计信息
+        print(f"📊 统计信息:")
+        print(f"   - 找到IP地址: {len(all_ips)}")
+        print(f"   - 可用URL: {len(valid_urls)}")
+        print(f"   - 发现频道: {len(self.channels)}")
+        print(f"   - 可用频道: {len(self.results)}")
+        print(f"   - 不可用频道: {len(self.error_channels)}")
+        print(f"   - 生成文件: itvlist.txt, itvlist.m3u")
+
+# 主程序入口
+if __name__ == "__main__":
+    # 安装必要的依赖
+    try:
+        import selenium
+        import fake_useragent
+        import eventlet
+    except ImportError:
+        print("❌ 请先安装依赖: pip install selenium fake-useragent eventlet")
+        exit(1)
+    
+    # 创建爬虫实例并运行
+    crawler = SecureFOFACrawler()
+    crawler.run()

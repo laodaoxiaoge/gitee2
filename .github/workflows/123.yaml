@@ -1,4 +1,4 @@
-name: itvlist
+name: FOFA IPTV Extractor
 
 on:
   schedule:
@@ -6,12 +6,13 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  extract:
     runs-on: ubuntu-latest
     
     steps:
@@ -23,38 +24,33 @@ jobs:
         with:
           python-version: '3.10'
           
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y chromium-browser chromium-chromedriver
-          echo "Chrome路径: $(which chromium-browser)"
+      - name: Install dependencies
+        run: pip install requests eventlet
           
-      - name: Install Python dependencies
-        run: |
-          pip install selenium requests futures eventlet
+      - name: Run FOFA extractor
+        run: python fofa_extractor.py
+        env:
+          # 可以在这里设置环境变量覆盖配置
+          SELECTED_PROVINCES: "hejiang,guangdong,shanghai"
+          SOURCE_TYPES: "hotel,multicast"
           
-      - name: Run itv_all
-        run: python itv_all.py
-        
-      - name: Check generated files
+      - name: Check results
         run: |
           echo "生成的文件:"
           ls -la *.txt *.m3u 2>/dev/null || echo "未找到文件"
           if [ -f "itvlist.txt" ]; then
-            echo "itvlist.txt 内容预览:"
-            head -5 itvlist.txt
+            echo "频道统计:"
+            grep -c ",http" itvlist.txt | xargs echo "总频道数:"
           fi
           
-      - name: Commit and push if changed
+      - name: Commit changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add *.txt *.m3u
           if ! git diff --staged --quiet; then
-            git commit -m "🤖 Auto update: $(date +'%Y-%m-%d %H:%M')"
+            git commit -m "🤖 FOFA源更新: $(date +'%Y-%m-%d %H:%M')"
             git push
-          else
-            echo "没有文件变更，跳过提交"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

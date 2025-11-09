@@ -1,85 +1,97 @@
-name: itvlist 123
+name: 'Multi-Branch Update Schedule'
 
 on:
   schedule:
-    - cron: '0 21 * * *'  # UTC时间21点（北京时间次日5点）
+    - cron: '0 22 * * *'  # 每天UTC时间22点
+    - cron: '0 10 * * *'  # 每天UTC时间10点
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: '要运行的分支'
+        required: true
+        default: 'master'
+        type: choice
+        options:
+          - master
+          - dev
+          - gd
   push:
     branches:
-      - main
+      - master
+      - dev
+      - gd
 
-# 关键修复：添加写入权限
 permissions:
   contents: write
 
 jobs:
-  build:
+  push:
     runs-on: ubuntu-latest
-
+    
     steps:
+      - name: Determine target branch
+        id: vars
+        run: |
+          # 根据不同触发方式确定目标分支
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # 手动触发：使用输入的分支
+            echo "TARGET_BRANCH=${{ github.event.inputs.target_branch }}" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" == "push" ]; then
+            # Push触发：使用触发推送的分支
+            echo "TARGET_BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
+          else
+            # 定时触发：使用默认分支
+            echo "TARGET_BRANCH=master" >> $GITHUB_ENV
+          fi
+          echo "🎯 目标分支: $TARGET_BRANCH"
+      
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          # 重要：添加token配置
+          ref: ${{ env.TARGET_BRANCH }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          # 获取完整历史记录
-          fetch-depth: 0
-
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'  # 建议指定具体版本
-
-      - name: Install dependencies
+          python-version: '3.13'
+          
+      - name: Install system dependencies
         run: |
-          pip install selenium requests futures eventlet
-          # 添加Chromedriver用于selenium
           sudo apt-get update
-          sudo apt-get install -y chromium-chromedriver
-
-      - name: Run itv_all
-        run: |
-          cd ${{ github.workspace }}
-          python itv_all.py
-
-      #- name: Run cctv
-        #run: python cctv.py
+          sudo apt-get install -y ffmpeg chromium-chromedriver
+          
+      - name: Install pipenv
+        run: pip install pipenv
         
-      #- name: Run weishi
-        #run: python weishi.py
+      - name: Install dependencies
+        run: pipenv install --deploy
         
-      #- name: Run qita
-        #run: python qita.py
-
-      - name: 检查文件变更
-        id: check-changes
+      - name: Check open_driver config
+        id: check_driver
         run: |
-          # 检查是否有文件变更
-          if git status --porcelain | grep -q '\.\(txt\|m3u\)$'; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "📁 检测到文件变更:"
-            git status --porcelain | grep '\.\(txt\|m3u\)$'
-          else
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "🟡 没有检测到txt或m3u文件变更"
+          echo "OPEN_DRIVER=$(python -c '
+          try:
+              from utils.config import config
+              open_driver = config.open_driver
+          except Exception as e:
+              print(f"Config import error: {e}")
+              open_driver = False
+          print(open_driver)')" >> $GITHUB_ENV
+          
+      - name: Install selenium
+        if: env.OPEN_DRIVER == 'True'
+        run: pipenv install selenium
+        
+      - name: Run update
+        run: pipenv run dev
+        
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto update: $(date +'%Y-%m-%d %H:%M')"
+            git push origin ${{ env.TARGET_BRANCH }}
           fi
-
-      - name: 配置Git
-        run: |
-          git config --local user.email "ssili@126.com"
-          git config --local user.name "ssili126"
-
-      - name: 提交更改
-        if: steps.check-changes.outputs.has_changes == 'true'
-        run: |
-          # 只添加txt和m3u文件
-          git add *.txt *.m3u || echo "没有找到txt/m3u文件"
-          
-          # 提交变更
-          git commit -m "🤖 自动更新: $(date +'%Y-%m-%d %H:%M:%S')" || exit 0
-          
-          # 推送变更（不使用强制推送）
-          git pull --rebase origin main
-          git push origin main
-        env:
-          # 使用token进行认证
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

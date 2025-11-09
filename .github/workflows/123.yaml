@@ -1,0 +1,85 @@
+name: itvlist
+
+on:
+  schedule:
+    - cron: '0 21 * * *'  # UTC时间21点（北京时间次日5点）
+  push:
+    branches:
+      - main
+
+# 关键修复：添加写入权限
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # 重要：添加token配置
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # 获取完整历史记录
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'  # 建议指定具体版本
+
+      - name: Install dependencies
+        run: |
+          pip install selenium requests futures eventlet
+          # 添加Chromedriver用于selenium
+          sudo apt-get update
+          sudo apt-get install -y chromium-chromedriver
+
+      - name: Run itv_all
+        run: |
+          cd ${{ github.workspace }}
+          python itv_all.py
+
+      #- name: Run cctv
+        #run: python cctv.py
+        
+      #- name: Run weishi
+        #run: python weishi.py
+        
+      #- name: Run qita
+        #run: python qita.py
+
+      - name: 检查文件变更
+        id: check-changes
+        run: |
+          # 检查是否有文件变更
+          if git status --porcelain | grep -q '\.\(txt\|m3u\)$'; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "📁 检测到文件变更:"
+            git status --porcelain | grep '\.\(txt\|m3u\)$'
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "🟡 没有检测到txt或m3u文件变更"
+          fi
+
+      - name: 配置Git
+        run: |
+          git config --local user.email "ssili@126.com"
+          git config --local user.name "ssili126"
+
+      - name: 提交更改
+        if: steps.check-changes.outputs.has_changes == 'true'
+        run: |
+          # 只添加txt和m3u文件
+          git add *.txt *.m3u || echo "没有找到txt/m3u文件"
+          
+          # 提交变更
+          git commit -m "🤖 自动更新: $(date +'%Y-%m-%d %H:%M:%S')" || exit 0
+          
+          # 推送变更（不使用强制推送）
+          git pull --rebase origin main
+          git push origin main
+        env:
+          # 使用token进行认证
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
